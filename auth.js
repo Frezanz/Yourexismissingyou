@@ -8,7 +8,6 @@
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
-  let method = 'email';
   let pendingIdentifier = '';
   let pendingMode = 'login';
   let signupProfile = null;
