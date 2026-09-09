@@ -11,6 +11,7 @@
   let method = 'email';
   let pendingIdentifier = '';
   let pendingMode = 'login';
+  let signupProfile = null;
   let currentUser = null;
   let otpCooldownUntil = 0;
   let otpCooldownTimer = null;
@@ -26,7 +27,11 @@
 
   function friendlyError(error) {
     if (!error) return 'Something went wrong. Please try again.';
+    const code = String(error.code || '');
     const msg = String(error.message || error.error_description || error);
+    if (code === 'over_email_send_rate_limit') return 'Supabase has temporarily limited email OTPs for this address. Wait and try again later.';
+    if (code === 'over_request_rate_limit') return 'Too many OTP requests from this connection. Wait a few minutes and try again.';
+    if (code === 'over_sms_send_rate_limit') return 'Too many SMS OTP requests for this number. Wait and try again later.';
     if (/rate limit/i.test(msg)) return 'Too many attempts. Wait a little and try again.';
     if (/invalid.*otp|otp.*invalid|token.*invalid|expired/i.test(msg)) return 'That code is invalid or expired.';
     if (/phone.*provider|sms|twilio|vonage|messagebird/i.test(msg)) return 'Phone OTP is not configured on this Supabase project yet. Use Email OTP.';
@@ -63,7 +68,7 @@
     if (contact) contact.hidden = step !== 'contact';
     if (otp) otp.hidden = step !== 'otp';
     if (signed) signed.hidden = step !== 'signed';
-    if (footer) footer.hidden = step === 'signed';
+    if (footer) footer.hidden = step !== 'contact';
   }
 
   function renderSignedIn() {
@@ -90,15 +95,18 @@
         input.inputMode = 'email';
         input.autocomplete = 'email';
         input.placeholder = 'you@example.com';
+        input.value = pendingMode === 'signup' ? (signupProfile?.email || '') : (window.__btyaEmailContact || '');
       }
       setAuthMessage('A one-time code will be sent to your email. No password is required.');
     } else {
       label?.firstChild && (label.firstChild.textContent = 'Phone');
       if (input) {
         input.type = 'tel';
-        input.inputMode = 'tel';
+        input.inputMode = 'numeric';
         input.autocomplete = 'tel';
-        input.placeholder = '+91 98765 43210';
+        input.pattern = '[0-9]*';
+        input.placeholder = '10-digit phone number';
+        input.value = pendingMode === 'signup' ? (signupProfile?.phone || '') : (window.__btyaPhoneContact || '');
       }
       setAuthMessage('Phone OTP requires an SMS provider configured in the Supabase project.');
     }
@@ -159,24 +167,22 @@
     }
 
     if (signup) {
-      const name = ($('#signupName')?.value || '').trim();
-      const phone = ($('#signupPhone')?.value || '').replace(/\D/g, '');
-      const email = ($('#signupEmail')?.value || '').trim().toLowerCase();
-      const age = $('#signupAge')?.value || '';
+      const profile = signupProfile || {};
+      const name = profile.name || '';
+      const phone = profile.phone || '';
+      const email = profile.email || '';
+      const age = profile.age || '';
 
       if (!name || !email || !phone) return toast('Real name, phone and email are required.');
       if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Enter a valid email address.');
 
-      // Phone is profile metadata during Email OTP signup. Do NOT require E.164 here.
-      // E.164 validation is reserved for actual Phone OTP because Supabase uses that value for SMS delivery.
       options.data = {
         full_name: name,
         phone_number: phone,
         age: age || null,
         account_type: 'registered'
       };
-      pendingIdentifier = email;
-      method = 'email';
+      pendingIdentifier = method === 'email' ? email : phone;
     }
 
     const payload = method === 'email'
@@ -192,6 +198,7 @@
     }
 
     setOtpCooldown(60);
+    $('#authTitle').textContent = 'Enter your code.';
     $('#otpSentText').textContent = method === 'email'
       ? `Code sent to ${pendingIdentifier}. Check your inbox. If your Supabase email template uses a confirmation link instead, tapping that link will finish sign-in automatically.`
       : `Code sent to ${pendingIdentifier}.`;
@@ -267,20 +274,27 @@
     $('#signupPhone')?.addEventListener('input', e => {
       e.target.value = e.target.value.replace(/\D/g, '');
     });
+    $('#otpInput')?.addEventListener('input', e => {
+      e.target.value = e.target.value.replace(/\D/g, '').slice(0, 8);
+    });
     $$('.auth-method').forEach(b => b.addEventListener('click', () => selectMethod(b.dataset.authMethod)));
-    $('#sendOtpBtn')?.addEventListener('click', () => sendOtp());
+    $('#sendOtpBtn')?.addEventListener('click', () => sendOtp({ signup: pendingMode === 'signup' }));
     $('#verifyOtpBtn')?.addEventListener('click', verifyOtp);
     $('#changeIdentifierBtn')?.addEventListener('click', () => showAuthStep('contact'));
     $('#signOutBtn')?.addEventListener('click', signOut);
     $('#createAccountBtn')?.addEventListener('click', () => {
+      const name = ($('#signupName')?.value || '').trim();
+      const phone = ($('#signupPhone')?.value || '').replace(/\D/g, '');
       const email = ($('#signupEmail')?.value || '').trim().toLowerCase();
-      if (!email) return toast('Email is required for the current Email OTP test.');
+      const age = $('#signupAge')?.value || '';
+      if (!name || !phone || !email) return toast('Real name, phone and email are required.');
+      if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Enter a valid email address.');
 
-      // Move into the signup authentication step, but do not send the OTP automatically.
-      // The user should see the correct signup state and explicitly tap Send OTP.
+      signupProfile = { name, phone, email, age };
       pendingMode = 'signup';
       pendingIdentifier = email;
-      $('#authIdentifier').value = email;
+      window.__btyaEmailContact = email;
+      window.__btyaPhoneContact = phone;
       closeModal($('#joinModal'));
       openModal('authModal');
       selectMethod('email');
