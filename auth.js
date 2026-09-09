@@ -12,6 +12,8 @@
   let pendingIdentifier = '';
   let pendingMode = 'login';
   let currentUser = null;
+  let otpCooldownUntil = 0;
+  let otpCooldownTimer = null;
 
   function toast(message) {
     const t = $('#toast');
@@ -104,7 +106,31 @@
 
   function cleanPhone(value) { return value.trim().replace(/[()\-\s]/g, ''); }
 
+  function setOtpCooldown(seconds = 60) {
+    const button = $('#sendOtpBtn');
+    otpCooldownUntil = Date.now() + seconds * 1000;
+    clearInterval(otpCooldownTimer);
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((otpCooldownUntil - Date.now()) / 1000));
+      if (button) {
+        button.disabled = remaining > 0;
+        button.textContent = remaining > 0 ? `Wait ${remaining}s` : 'Send OTP';
+      }
+      if (!remaining) clearInterval(otpCooldownTimer);
+    };
+    tick();
+    otpCooldownTimer = setInterval(tick, 1000);
+  }
+
+  function otpCooldownRemaining() {
+    return Math.max(0, Math.ceil((otpCooldownUntil - Date.now()) / 1000));
+  }
+
   async function sendOtp({ signup = false } = {}) {
+    const cooldown = otpCooldownRemaining();
+    if (cooldown > 0) return toast(`Please wait ${cooldown}s before requesting another OTP.`);
+
     if (!client) {
       setAuthMessage('Authentication is not connected. Check supabase-config.js.', 'auth-error');
       toast('Supabase authentication is not configured.');
@@ -134,7 +160,7 @@
 
     if (signup) {
       const name = ($('#signupName')?.value || '').trim();
-      const phone = ($('#signupPhone')?.value || '').trim();
+      const phone = ($('#signupPhone')?.value || '').replace(/\D/g, '');
       const email = ($('#signupEmail')?.value || '').trim().toLowerCase();
       const age = $('#signupAge')?.value || '';
 
@@ -159,10 +185,13 @@
 
     const { error } = await client.auth.signInWithOtp(payload);
     if (error) {
-      setAuthMessage(friendlyError(error), 'auth-error');
+      const message = friendlyError(error);
+      setAuthMessage(message, 'auth-error');
+      if (/rate limit|too many attempts/i.test(String(error.message || error))) setOtpCooldown(60);
       return;
     }
 
+    setOtpCooldown(60);
     $('#otpSentText').textContent = method === 'email'
       ? `Code sent to ${pendingIdentifier}. Check your inbox. If your Supabase email template uses a confirmation link instead, tapping that link will finish sign-in automatically.`
       : `Code sent to ${pendingIdentifier}.`;
@@ -235,6 +264,9 @@
   }
 
   function bind() {
+    $('#signupPhone')?.addEventListener('input', e => {
+      e.target.value = e.target.value.replace(/\D/g, '');
+    });
     $$('.auth-method').forEach(b => b.addEventListener('click', () => selectMethod(b.dataset.authMethod)));
     $('#sendOtpBtn')?.addEventListener('click', () => sendOtp());
     $('#verifyOtpBtn')?.addEventListener('click', verifyOtp);
