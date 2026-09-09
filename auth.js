@@ -240,14 +240,19 @@
     $('#verifyOtpBtn')?.addEventListener('click', verifyOtp);
     $('#changeIdentifierBtn')?.addEventListener('click', () => showAuthStep('contact'));
     $('#signOutBtn')?.addEventListener('click', signOut);
-    $('#createAccountBtn')?.addEventListener('click', async () => {
+    $('#createAccountBtn')?.addEventListener('click', () => {
       const email = ($('#signupEmail')?.value || '').trim().toLowerCase();
       if (!email) return toast('Email is required for the current Email OTP test.');
+
+      // Move into the signup authentication step, but do not send the OTP automatically.
+      // The user should see the correct signup state and explicitly tap Send OTP.
+      pendingMode = 'signup';
+      pendingIdentifier = email;
       $('#authIdentifier').value = email;
       closeModal($('#joinModal'));
       openModal('authModal');
       selectMethod('email');
-      await sendOtp({ signup: true });
+      renderSignedIn();
     });
     $('#accountButton')?.addEventListener('click', openAuth);
     $('#joinButton')?.addEventListener('click', openJoin);
