@@ -31,10 +31,8 @@
     const msg = String(error.message || error.error_description || error);
     if (code === 'over_email_send_rate_limit') return 'Supabase has temporarily limited email OTPs for this address. Wait and try again later.';
     if (code === 'over_request_rate_limit') return 'Too many OTP requests from this connection. Wait a few minutes and try again.';
-    if (code === 'over_sms_send_rate_limit') return 'Too many SMS OTP requests for this number. Wait and try again later.';
     if (/rate limit/i.test(msg)) return 'Too many attempts. Wait a little and try again.';
     if (/invalid.*otp|otp.*invalid|token.*invalid|expired/i.test(msg)) return 'That code is invalid or expired.';
-    if (/phone.*provider|sms|twilio|vonage|messagebird/i.test(msg)) return 'Phone OTP is not configured on this Supabase project yet. Use Email OTP.';
     if (/fetch|network|failed to fetch/i.test(msg)) return 'The authentication server could not be reached. Check the Supabase project status and configuration.';
     return msg;
   }
@@ -51,7 +49,7 @@
     const join = $('#joinButton');
     if (!button) return;
     if (currentUser) {
-      const name = currentUser.user_metadata?.full_name || currentUser.email || currentUser.phone || 'Account';
+      const name = currentUser.user_metadata?.full_name || currentUser.email || 'Account';
       button.textContent = name.length > 18 ? `${name.slice(0, 17)}…` : name;
       if (join) join.textContent = 'Account';
     } else {
@@ -79,40 +77,10 @@
     }
     $('#authTitle').textContent = 'You are in.';
     $('#signedUserName').textContent = currentUser.user_metadata?.full_name || 'BTYA account';
-    $('#signedUserContact').textContent = currentUser.email || currentUser.phone || 'Authenticated session';
+    $('#signedUserContact').textContent = currentUser.email || 'Authenticated session';
     showAuthStep('signed');
   }
 
-  function selectMethod(next) {
-    method = next;
-    $$('.auth-method').forEach(b => b.classList.toggle('active', b.dataset.authMethod === method));
-    const label = $('#authIdentifierLabel');
-    const input = $('#authIdentifier');
-    if (method === 'email') {
-      label?.firstChild && (label.firstChild.textContent = 'Email');
-      if (input) {
-        input.type = 'email';
-        input.inputMode = 'email';
-        input.autocomplete = 'email';
-        input.placeholder = 'you@example.com';
-        input.value = pendingMode === 'signup' ? (signupProfile?.email || '') : (window.__btyaEmailContact || '');
-      }
-      setAuthMessage('A one-time code will be sent to your email. No password is required.');
-    } else {
-      label?.firstChild && (label.firstChild.textContent = 'Phone');
-      if (input) {
-        input.type = 'tel';
-        input.inputMode = 'numeric';
-        input.autocomplete = 'tel';
-        input.pattern = '[0-9]*';
-        input.placeholder = '10-digit phone number';
-        input.value = pendingMode === 'signup' ? (signupProfile?.phone || '') : (window.__btyaPhoneContact || '');
-      }
-      setAuthMessage('Phone OTP requires an SMS provider configured in the Supabase project.');
-    }
-  }
-
-  function cleanPhone(value) { return value.trim().replace(/[()\-\s]/g, ''); }
 
   function setOtpCooldown(seconds = 60) {
     const button = $('#sendOtpBtn');
@@ -138,85 +106,54 @@
   async function sendOtp({ signup = false } = {}) {
     const cooldown = otpCooldownRemaining();
     if (cooldown > 0) return toast(`Please wait ${cooldown}s before requesting another OTP.`);
-
     if (!client) {
       setAuthMessage('Authentication is not connected. Check supabase-config.js.', 'auth-error');
       toast('Supabase authentication is not configured.');
       return;
     }
 
-    const identifier = method === 'email'
-      ? ($('#authIdentifier')?.value || '').trim().toLowerCase()
-      : cleanPhone($('#authIdentifier')?.value || '');
-
-    if (method === 'email' && !/^\S+@\S+\.\S+$/.test(identifier)) {
+    const email = ($('#authIdentifier')?.value || '').trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
       setAuthMessage('Enter a valid email address.', 'auth-error');
       return;
     }
-    if (method === 'phone' && !/^\+?[1-9]\d{7,14}$/.test(identifier)) {
-      setAuthMessage('Use an international phone number, e.g. +919876543210.', 'auth-error');
-      return;
-    }
-
-    pendingIdentifier = identifier;
+    pendingIdentifier = email;
     pendingMode = signup ? 'signup' : 'login';
 
     const options = { shouldCreateUser: signup };
-    if (method === 'email') {
-      options.emailRedirectTo = `${window.location.origin}${window.location.pathname}`;
-    }
-
     if (signup) {
       const profile = signupProfile || {};
       const name = profile.name || '';
       const phone = profile.phone || '';
-      const email = profile.email || '';
+      const profileEmail = profile.email || '';
       const age = profile.age || '';
-
-      if (!name || !email || !phone) return toast('Real name, phone and email are required.');
-      if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Enter a valid email address.');
-
-      options.data = {
-        full_name: name,
-        phone_number: phone,
-        age: age || null,
-        account_type: 'registered'
-      };
-      pendingIdentifier = method === 'email' ? email : phone;
+      if (!name || !profileEmail || !phone) return toast('Real name, phone and email are required.');
+      if (!/^\S+@\S+\.\S+$/.test(profileEmail)) return toast('Enter a valid email address.');
+      if (profileEmail !== email) return toast('Use the same email address you entered for your account.');
+      options.data = { full_name: name, phone_number: phone, age: age || null, account_type: 'registered' };
     }
 
-    const payload = method === 'email'
-      ? { email: pendingIdentifier, options }
-      : { phone: pendingIdentifier, options };
-
-    const { error } = await client.auth.signInWithOtp(payload);
+    const { error } = await client.auth.signInWithOtp({ email: pendingIdentifier, options });
     if (error) {
       const message = friendlyError(error);
       setAuthMessage(message, 'auth-error');
       if (/rate limit|too many attempts/i.test(String(error.message || error))) setOtpCooldown(60);
       return;
     }
-
     setOtpCooldown(60);
     $('#authTitle').textContent = 'Enter your code.';
-    $('#otpSentText').textContent = method === 'email'
-      ? `Code sent to ${pendingIdentifier}. Check your inbox. If your Supabase email template uses a confirmation link instead, tapping that link will finish sign-in automatically.`
-      : `Code sent to ${pendingIdentifier}.`;
+    $('#otpSentText').textContent = `Code sent to ${pendingIdentifier}. Check your inbox.`;
     $('#otpInput').value = '';
     $('#otpInput').focus();
     showAuthStep('otp');
-    toast('Authentication message sent.');
+    toast('Authentication email sent.');
   }
 
   async function verifyOtp() {
     if (!client || !pendingIdentifier) return;
     const token = ($('#otpInput')?.value || '').trim();
     if (!/^\d{6,8}$/.test(token)) return toast('Enter the OTP you received.');
-
-    const payload = method === 'email'
-      ? { email: pendingIdentifier, token, type: 'email' }
-      : { phone: pendingIdentifier, token, type: 'sms' };
-    const { data, error } = await client.auth.verifyOtp(payload);
+    const { data, error } = await client.auth.verifyOtp({ email: pendingIdentifier, token, type: 'email' });
     if (error) {
       setAuthMessage(friendlyError(error), 'auth-error');
       return;
@@ -277,7 +214,6 @@
     $('#otpInput')?.addEventListener('input', e => {
       e.target.value = e.target.value.replace(/\D/g, '').slice(0, 8);
     });
-    $$('.auth-method').forEach(b => b.addEventListener('click', () => selectMethod(b.dataset.authMethod)));
     $('#sendOtpBtn')?.addEventListener('click', () => sendOtp({ signup: pendingMode === 'signup' }));
     $('#verifyOtpBtn')?.addEventListener('click', verifyOtp);
     $('#changeIdentifierBtn')?.addEventListener('click', () => showAuthStep('contact'));
@@ -294,21 +230,20 @@
       pendingMode = 'signup';
       pendingIdentifier = email;
       window.__btyaEmailContact = email;
-      window.__btyaPhoneContact = phone;
       closeModal($('#joinModal'));
       openModal('authModal');
-      selectMethod('email');
+      const authIdentifier = $('#authIdentifier');
+      if (authIdentifier) authIdentifier.value = email;
       renderSignedIn();
     });
     $('#accountButton')?.addEventListener('click', openAuth);
     $('#joinButton')?.addEventListener('click', openJoin);
     $$('[data-modal="authModal"]').forEach(b => b.addEventListener('click', openAuth));
     $$('[data-modal="joinModal"]').forEach(b => b.addEventListener('click', openJoin));
-    $$('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.closest('.modal-backdrop'))));
+    $$('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.closest('.modal'))));
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') document.querySelectorAll('.modal-backdrop.open').forEach(closeModal);
+      if (e.key === 'Escape') document.querySelectorAll('.modal.open').forEach(closeModal);
     });
-    selectMethod('email');
 
     if (client) {
       client.auth.getSession().then(({ data }) => {
