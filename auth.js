@@ -57,7 +57,7 @@
     const contact = $('#authFormStep');
     const otp = $('#otpStep');
     const signed = $('#signedInStep');
-    const footer = $('#authSwitchFoot');
+    const footer = $('#authSwitchFooter');
     if (contact) contact.hidden = step !== 'contact';
     if (otp) otp.hidden = step !== 'otp';
     if (signed) signed.hidden = step !== 'signed';
@@ -134,18 +134,29 @@
 
     if (signup) {
       const name = ($('#signupName')?.value || '').trim();
-      const phone = cleanPhone($('#signupPhone')?.value || '');
+      const phone = ($('#signupPhone')?.value || '').trim();
       const email = ($('#signupEmail')?.value || '').trim().toLowerCase();
       const age = $('#signupAge')?.value || '';
+
       if (!name || !email || !phone) return toast('Real name, phone and email are required.');
       if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Enter a valid email address.');
-      if (!/^\+?[1-9]\d{7,14}$/.test(phone)) return toast('Use an international phone number for the phone field.');
-      options.data = { full_name: name, phone_number: phone, age: age || null, account_type: 'registered' };
+
+      // Phone is profile metadata during Email OTP signup. Do NOT require E.164 here.
+      // E.164 validation is reserved for actual Phone OTP because Supabase uses that value for SMS delivery.
+      options.data = {
+        full_name: name,
+        phone_number: phone,
+        age: age || null,
+        account_type: 'registered'
+      };
       pendingIdentifier = email;
       method = 'email';
     }
 
-    const payload = method === 'email' ? { email: pendingIdentifier, options } : { phone: pendingIdentifier, options };
+    const payload = method === 'email'
+      ? { email: pendingIdentifier, options }
+      : { phone: pendingIdentifier, options };
+
     const { error } = await client.auth.signInWithOtp(payload);
     if (error) {
       setAuthMessage(friendlyError(error), 'auth-error');
@@ -204,7 +215,7 @@
 
   function openJoin() {
     if (currentUser) return openAuth();
-    $('#signupName').focus();
+    $('#signupName')?.focus();
     openModal('joinModal');
   }
 
@@ -246,7 +257,6 @@
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') document.querySelectorAll('.modal-backdrop.open').forEach(closeModal);
     });
-
     selectMethod('email');
 
     if (client) {
